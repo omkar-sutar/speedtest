@@ -1,6 +1,6 @@
 import React from 'react';
 
-export function ResultCard({ finalSpeed, ping, visible }) {
+export function ResultCard({ finalSpeed, finalUploadSpeed, ping, visible }) {
     return (
         <div className={`result-card ${visible ? 'visible' : ''}`}>
             <div className="result-group">
@@ -15,6 +15,14 @@ export function ResultCard({ finalSpeed, ping, visible }) {
                 <div className="result-label">Download</div>
                 <div className="result-value">
                     {finalSpeed !== null ? finalSpeed.toFixed(2) : '—'}
+                    <span className="result-unit">Mbps</span>
+                </div>
+            </div>
+            <div className="result-divider"></div>
+            <div className="result-group">
+                <div className="result-label">Upload</div>
+                <div className="result-value">
+                    {finalUploadSpeed !== null ? finalUploadSpeed.toFixed(2) : '—'}
                     <span className="result-unit">Mbps</span>
                 </div>
             </div>

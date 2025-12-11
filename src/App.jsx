@@ -10,6 +10,7 @@ function App() {
     status,
     currentSpeed,
     finalSpeed,
+    finalUploadSpeed,
     ping,
     progress,
     speedHistory,
@@ -23,6 +24,8 @@ function App() {
         return 'Measuring latency...';
       case 'testing_download':
         return 'Testing download speed...';
+      case 'testing_upload':
+        return 'Testing upload speed...';
       case 'completed':
         return 'Test completed!';
       default:
@@ -40,7 +43,11 @@ function App() {
       <main className="main-content">
         <h1 className="app-title">Speed Test</h1>
 
-        <SpeedGauge speed={currentSpeed} progress={progress} />
+        <SpeedGauge
+          speed={currentSpeed}
+          progress={progress}
+          label={status === 'testing_upload' ? 'Upload Speed' : 'Download Speed'}
+        />
 
         <p className="status-text">{getStatusText()}</p>
 
@@ -52,13 +59,17 @@ function App() {
 
         <ResultCard
           finalSpeed={finalSpeed}
+          finalUploadSpeed={finalUploadSpeed}
           ping={ping}
           visible={status === 'completed'}
         />
 
         {/* Show graph when testing or completed */}
-        {(status === 'testing_download' || status === 'completed') && (
-          <SpeedGraph data={speedHistory} />
+        {(status === 'testing_download' || status === 'testing_upload' || status === 'completed') && (
+          <SpeedGraph
+            data={speedHistory}
+            type={status === 'testing_upload' ? 'upload' : 'download'}
+          />
         )}
       </main>
     </div>

@@ -1,6 +1,6 @@
 import React from 'react';
 
-export function SpeedGauge({ speed, progress }) {
+export function SpeedGauge({ speed, progress, label }) {
     // SVG circle calculations
     const radius = 140;
     const circumference = 2 * Math.PI * radius;
@@ -44,7 +44,7 @@ export function SpeedGauge({ speed, progress }) {
                     {speed.toFixed(1)}
                 </div>
                 <div className="speed-unit">Mbps</div>
-                <div className="speed-label">Download Speed</div>
+                <div className="speed-label">{label || 'Download Speed'}</div>
             </div>
         </div>
     );

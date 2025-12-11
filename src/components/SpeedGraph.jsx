@@ -23,16 +23,16 @@ ChartJS.register(
     Filler
 );
 
-export function SpeedGraph({ data }) {
+export function SpeedGraph({ data, type = 'download' }) {
     const chartData = useMemo(() => {
         return {
             labels: data.map((d) => d.time),
             datasets: [
                 {
-                    label: 'Download Speed',
+                    label: type === 'download' ? 'Download Speed' : 'Upload Speed',
                     data: data.map((d) => d.speed),
-                    borderColor: 'rgb(0, 245, 255)', // Cyan color matching the gauge start
-                    backgroundColor: 'rgba(0, 245, 255, 0.2)',
+                    borderColor: type === 'download' ? 'rgb(0, 245, 255)' : 'rgb(236, 72, 153)', // Cyan or Pink
+                    backgroundColor: type === 'download' ? 'rgba(0, 245, 255, 0.2)' : 'rgba(236, 72, 153, 0.2)',
                     tension: 0.4, // Smooth curve
                     pointRadius: 0, // Continuous look
                     borderWidth: 2,
@@ -40,7 +40,7 @@ export function SpeedGraph({ data }) {
                 },
             ],
         };
-    }, [data]);
+    }, [data, type]);
 
     const options = {
         responsive: true,

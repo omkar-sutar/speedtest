@@ -20,6 +20,7 @@ export function useSpeedTest() {
     const [status, setStatus] = useState('idle'); // idle, testing_ping, testing_download, completed
     const [currentSpeed, setCurrentSpeed] = useState(0);
     const [finalSpeed, setFinalSpeed] = useState(null);
+    const [finalUploadSpeed, setFinalUploadSpeed] = useState(null);
     const [ping, setPing] = useState(null);
     const [progress, setProgress] = useState(0);
     const [speedHistory, setSpeedHistory] = useState([]);
@@ -49,8 +50,9 @@ export function useSpeedTest() {
         }
 
         if (pings.length > 0) {
-            const minPing = Math.min(...pings);
-            setPing(Math.round(minPing));
+            const avgPing = pings.reduce((a, b) => a + b, 0) / pings.length;
+            console.log('Pings:', pings, 'Average:', avgPing);
+            setPing(Math.round(avgPing));
         }
     };
 
@@ -58,6 +60,7 @@ export function useSpeedTest() {
         setStatus('testing_download');
         setCurrentSpeed(0);
         setFinalSpeed(null);
+        setFinalUploadSpeed(null);
         setProgress(0);
         setSpeedHistory([]);
 
@@ -143,7 +146,7 @@ export function useSpeedTest() {
                 setFinalSpeed(finalAvgSpeed);
                 setCurrentSpeed(finalAvgSpeed);
                 setProgress(100);
-                setStatus('completed');
+                // setStatus('completed'); // Moved to upload test
             }
 
         } catch (error) {
@@ -157,14 +160,114 @@ export function useSpeedTest() {
         }
     }, []);
 
+    const testUploadSpeed = useCallback(async () => {
+        setStatus('testing_upload');
+        setCurrentSpeed(0);
+        setProgress(0);
+        setSpeedHistory([]);
+
+        const TEST_DURATION = 10000; // 10 seconds
+        const startTime = performance.now();
+        let uploadedBytes = 0;
+        let lastReportTime = startTime;
+        let lastReportBytes = 0;
+
+        // Circular buffer for smoothing speed (last 5 measurements)
+        const recentSpeeds = [];
+        const SMOOTHING_FACTOR = 5;
+
+        // Use smaller chunk (approx 200KB) for better granularity in 'no-cors' mode
+        // since we can't track progress within a single fetch.
+        const chunkSize = 200 * 1024;
+        const chunk = new Uint8Array(chunkSize);
+        for (let i = 0; i < chunk.length; i++) chunk[i] = Math.random() * 255;
+        // text/plain is safe for 'no-cors' simple requests
+        const blob = new Blob([chunk], { type: 'text/plain' });
+
+        const signal = abortControllerRef.current?.signal;
+
+        try {
+            while (performance.now() - startTime < TEST_DURATION) {
+                if (signal?.aborted) break;
+
+                // Use no-cors to bypass CORS restrictions
+                await fetch('https://speed.cloudflare.com/__up', {
+                    method: 'POST',
+                    body: blob,
+                    mode: 'no-cors',
+                    credentials: 'omit',
+                    headers: {
+                        'Content-Type': 'text/plain'
+                    },
+                    signal: signal,
+                });
+
+                uploadedBytes += blob.size;
+
+                const currentTime = performance.now();
+                const elapsedTime = currentTime - startTime;
+                const timeSinceLastReport = currentTime - lastReportTime;
+
+                // Update every ~100ms
+                if (timeSinceLastReport >= 100) {
+                    const bytesInInterval = uploadedBytes - lastReportBytes;
+                    const instantSpeedMbps = (bytesInInterval * 8) / (timeSinceLastReport * 1000); // Mbps
+
+                    // Smooth the speed
+                    recentSpeeds.push(instantSpeedMbps);
+                    if (recentSpeeds.length > SMOOTHING_FACTOR) {
+                        recentSpeeds.shift();
+                    }
+                    const smoothedSpeed = recentSpeeds.reduce((a, b) => a + b, 0) / recentSpeeds.length;
+
+                    setCurrentSpeed(smoothedSpeed);
+
+                    setSpeedHistory(prev => [
+                        ...prev,
+                        { time: parseFloat((elapsedTime / 1000).toFixed(1)), speed: smoothedSpeed }
+                    ]);
+
+                    setProgress(Math.min((elapsedTime / TEST_DURATION) * 100, 100));
+
+                    lastReportTime = currentTime;
+                    lastReportBytes = uploadedBytes;
+                }
+
+                if (elapsedTime >= TEST_DURATION) break;
+            }
+
+            if (!signal?.aborted) {
+                const totalDurationSeconds = (performance.now() - startTime) / 1000;
+                const finalAvgSpeed = (uploadedBytes * 8) / (totalDurationSeconds * 1000000); // Mbps
+
+                setFinalUploadSpeed(finalAvgSpeed);
+                setCurrentSpeed(finalAvgSpeed);
+                setProgress(100);
+                setStatus('completed');
+            }
+
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                console.log('Upload aborted');
+                setStatus('idle');
+            } else {
+                console.error('Upload test error:', error);
+                setStatus('idle');
+            }
+        }
+    }, []);
+
     const startTest = useCallback(async () => {
         abortControllerRef.current = new AbortController(); // Ensure new controller
         setPing(null);
         await testPing();
         if (!abortControllerRef.current?.signal.aborted) {
-            testDownloadSpeed();
+            await testDownloadSpeed();
+            if (!abortControllerRef.current?.signal.aborted) {
+                testUploadSpeed();
+            }
         }
-    }, [testDownloadSpeed]);
+    }, [testDownloadSpeed, testUploadSpeed]);
 
     const resetTest = useCallback(() => {
         if (abortControllerRef.current) {
@@ -176,12 +279,14 @@ export function useSpeedTest() {
         setPing(null);
         setProgress(0);
         setSpeedHistory([]);
+        setFinalUploadSpeed(null);
     }, []);
 
     return {
         status,
         currentSpeed,
         finalSpeed,
+        finalUploadSpeed,
         ping,
         progress,
         speedHistory,
