@@ -2,6 +2,7 @@ import React from 'react';
 import { SpeedGauge } from './components/SpeedGauge';
 import { GoButton } from './components/GoButton';
 import { ResultCard } from './components/ResultCard';
+import { SpeedGraph } from './components/SpeedGraph';
 import { useSpeedTest } from './hooks/useSpeedTest';
 
 function App() {
@@ -11,6 +12,7 @@ function App() {
     finalSpeed,
     ping,
     progress,
+    speedHistory,
     startTest,
     resetTest,
   } = useSpeedTest();
@@ -53,6 +55,11 @@ function App() {
           ping={ping}
           visible={status === 'completed'}
         />
+
+        {/* Show graph when testing or completed */}
+        {(status === 'testing_download' || status === 'completed') && (
+          <SpeedGraph data={speedHistory} />
+        )}
       </main>
     </div>
   );

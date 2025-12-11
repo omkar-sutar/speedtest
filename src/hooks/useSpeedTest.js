@@ -22,6 +22,7 @@ export function useSpeedTest() {
     const [finalSpeed, setFinalSpeed] = useState(null);
     const [ping, setPing] = useState(null);
     const [progress, setProgress] = useState(0);
+    const [speedHistory, setSpeedHistory] = useState([]);
     const abortControllerRef = useRef(null);
 
     const testPing = async () => {
@@ -29,17 +30,21 @@ export function useSpeedTest() {
         const pings = [];
         // Perform 5 pings
         for (let i = 0; i < 5; i++) {
+            if (abortControllerRef.current?.signal.aborted) return;
             try {
                 const startTime = performance.now();
                 // Use GET with small byte count. HEAD is often blocked by CORS on these public endpoints.
                 await fetch('https://speed.cloudflare.com/__down?bytes=1', {
                     method: 'GET',
                     cache: 'no-store',
+                    signal: abortControllerRef.current?.signal, // Support abort during ping
                 });
                 const endTime = performance.now();
                 pings.push(endTime - startTime);
             } catch (e) {
-                console.error('Ping failed', e);
+                if (e.name !== 'AbortError') {
+                    console.error('Ping failed', e);
+                }
             }
         }
 
@@ -54,84 +59,111 @@ export function useSpeedTest() {
         setCurrentSpeed(0);
         setFinalSpeed(null);
         setProgress(0);
+        setSpeedHistory([]);
 
-        const speeds = [];
-        const totalTests = TEST_FILES.length;
+        const TEST_DURATION = 10000; // 10 seconds
+        const startTime = performance.now();
+        let receivedBytes = 0;
+        let lastReportTime = startTime;
+        let lastReportBytes = 0;
 
-        for (let i = 0; i < totalTests; i++) {
-            const testFile = TEST_FILES[i];
-            abortControllerRef.current = new AbortController();
+        // Circular buffer for smoothing speed (last 5 measurements)
+        const recentSpeeds = [];
+        const SMOOTHING_FACTOR = 5;
 
-            try {
-                const startTime = performance.now();
+        abortControllerRef.current = new AbortController();
+        const signal = abortControllerRef.current.signal;
 
-                const response = await fetch(testFile.url + `?cache_bust=${Date.now()}`, {
+        try {
+            // We'll keep fetching huge files until time runs out
+            while (performance.now() - startTime < TEST_DURATION) {
+                if (signal.aborted) break;
+
+                // Use a large file to ensure we can sustain download
+                const response = await fetch('https://speed.cloudflare.com/__down?bytes=50000000', { // 50MB
                     method: 'GET',
                     cache: 'no-store',
-                    signal: abortControllerRef.current.signal,
+                    signal: signal,
                 });
 
-                if (!response.ok) {
-                    console.warn(`Test file ${i} failed, skipping...`);
-                    continue;
-                }
+                if (!response.ok) continue;
 
                 const reader = response.body.getReader();
-                let receivedBytes = 0;
-                const chunks = [];
 
                 while (true) {
-                    const { done, value } = await reader.read();
+                    if (signal.aborted) break;
 
+                    const { done, value } = await reader.read();
                     if (done) break;
 
-                    chunks.push(value);
                     receivedBytes += value.length;
 
-                    // Calculate real-time speed
-                    const elapsedTime = (performance.now() - startTime) / 1000; // seconds
-                    if (elapsedTime > 0) {
-                        const speedMbps = (receivedBytes * 8) / (elapsedTime * 1000000); // Mbps
-                        setCurrentSpeed(speedMbps);
+                    const currentTime = performance.now();
+                    const elapsedTime = currentTime - startTime;
+                    const timeSinceLastReport = currentTime - lastReportTime;
+
+                    // Update every ~100ms for smooth graph
+                    if (timeSinceLastReport >= 100) {
+                        // Calculate instantaneous speed over the last interval
+                        const bytesInInterval = receivedBytes - lastReportBytes;
+                        const instantSpeedMbps = (bytesInInterval * 8) / (timeSinceLastReport * 1000); // Mbps
+
+                        // Smooth the speed
+                        recentSpeeds.push(instantSpeedMbps);
+                        if (recentSpeeds.length > SMOOTHING_FACTOR) {
+                            recentSpeeds.shift();
+                        }
+                        const smoothedSpeed = recentSpeeds.reduce((a, b) => a + b, 0) / recentSpeeds.length;
+
+                        setCurrentSpeed(smoothedSpeed);
+
+                        // Add point to graph history
+                        setSpeedHistory(prev => [
+                            ...prev,
+                            { time: parseFloat((elapsedTime / 1000).toFixed(1)), speed: smoothedSpeed }
+                        ]);
 
                         // Update progress
-                        const testProgress = (i / totalTests) + (receivedBytes / testFile.size) / totalTests;
-                        setProgress(Math.min(testProgress * 100, 100));
+                        setProgress(Math.min((elapsedTime / TEST_DURATION) * 100, 100));
+
+                        lastReportTime = currentTime;
+                        lastReportBytes = receivedBytes;
                     }
-                }
 
-                const endTime = performance.now();
-                const durationSeconds = (endTime - startTime) / 1000;
-                const speedMbps = (receivedBytes * 8) / (durationSeconds * 1000000);
-                speeds.push(speedMbps);
-
-            } catch (error) {
-                if (error.name === 'AbortError') {
-                    console.log('Test aborted');
-                    setStatus('idle');
-                    return;
+                    if (elapsedTime >= TEST_DURATION) break;
                 }
+                reader.cancel(); // Cancel current download if time is up or loop continues
+            }
+
+            if (!signal.aborted) {
+                // Calculate final average speed for the entire session
+                const totalDurationSeconds = (performance.now() - startTime) / 1000;
+                const finalAvgSpeed = (receivedBytes * 8) / (totalDurationSeconds * 1000000); // Mbps
+
+                setFinalSpeed(finalAvgSpeed);
+                setCurrentSpeed(finalAvgSpeed);
+                setProgress(100);
+                setStatus('completed');
+            }
+
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                console.log('Test aborted');
+                setStatus('idle');
+            } else {
                 console.error('Download test error:', error);
+                setStatus('idle');
             }
         }
-
-        // Calculate average speed (excluding outliers)
-        if (speeds.length > 0) {
-            speeds.sort((a, b) => a - b);
-            // Use median for more accurate result
-            const median = speeds[Math.floor(speeds.length / 2)];
-            setFinalSpeed(median);
-            setCurrentSpeed(median);
-        }
-
-        setProgress(100);
-        setStatus('completed');
     }, []);
 
     const startTest = useCallback(async () => {
+        abortControllerRef.current = new AbortController(); // Ensure new controller
         setPing(null);
         await testPing();
-        testDownloadSpeed();
+        if (!abortControllerRef.current?.signal.aborted) {
+            testDownloadSpeed();
+        }
     }, [testDownloadSpeed]);
 
     const resetTest = useCallback(() => {
@@ -143,6 +175,7 @@ export function useSpeedTest() {
         setFinalSpeed(null);
         setPing(null);
         setProgress(0);
+        setSpeedHistory([]);
     }, []);
 
     return {
@@ -151,6 +184,7 @@ export function useSpeedTest() {
         finalSpeed,
         ping,
         progress,
+        speedHistory,
         startTest,
         resetTest,
     };
